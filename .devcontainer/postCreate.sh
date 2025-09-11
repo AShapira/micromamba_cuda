@@ -27,3 +27,12 @@ print("PyArrow:", pa.__version__)
 con = duckdb.connect()
 print(con.sql("select 1 as ok").fetchall())
 PY
+
+echo "--- GitHub CLI status (if installed) ---" || true
+if command -v gh >/dev/null 2>&1; then
+  gh --version || true
+  gh auth status || true
+  echo "To sign in run: gh auth login --hostname github.com --git-protocol https --web" || true
+  echo "(Headless? Use: gh auth login --hostname github.com --git-protocol https --device)" || true
+  echo "Then run: gh auth setup-git" || true
+fi

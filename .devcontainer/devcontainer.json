@@ -1,10 +1,14 @@
 {
   "name": "gis_conda_dev",
   "build": { "dockerfile": "Dockerfile" },
-  "hostRequirements": { "gpu": "required" },
+  "hostRequirements": { "gpu": "optional" },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "features": {},
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/git:1": { "version": "os-provided" },
+    "ghcr.io/devcontainers/features/ssh-agent:1": {}
+  },
   "forwardPorts": [8888],
   "portsAttributes": {
     "8888": { "label": "Jupyter" }
@@ -24,7 +28,8 @@
         "ms-toolsai.jupyter",
         "ms-vscode-remote.remote-containers",
         "ms-azuretools.vscode-docker",
-        "openai.chatgpt"
+        "openai.chatgpt",
+        "GitHub.vscode-pull-request-github"
       ]
     }
   },
@@ -32,8 +37,12 @@
   "postCreateCommand": "bash .devcontainer/postCreate.sh",
   "remoteUser": "mambauser",
   "overrideCommand": false,
+  "remoteEnv": {
+    "GH_TOKEN": "${localEnv:GH_TOKEN}",
+    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
+    "SSH_AUTH_SOCK": "${containerEnv:SSH_AUTH_SOCK}"
+  },
   "mounts": [
-    "source=${localWorkspaceFolder}/data,target=${containerWorkspaceFolder}/data,type=bind",
-    "source=D:\\data,target=${containerWorkspaceFolder}/gis_local_data,type=bind"
+    "source=${localWorkspaceFolder}/data,target=${containerWorkspaceFolder}/data,type=bind"
   ]
 }
