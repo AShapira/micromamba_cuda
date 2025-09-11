@@ -1,0 +1,70 @@
+name: gis
+channels:
+  - rapidsai
+  - nvidia
+  - conda-forge
+  - nodefaults
+dependencies:
+  # --- Core Python ---
+  - python=3.12
+  - pip=24.2
+
+  # --- Geo stack (CPU; pinned) ---
+  - numpy=1.26.4
+  - pandas=2.2.2
+  - geopandas>=1.0.0
+  - shapely=2.0.4
+  # Let solver choose PROJ/pyproj compatible with RAPIDS
+  # - pyproj
+  # - proj
+  # - proj-data
+  # Unpin GDAL/rasterio stack to resolve with RAPIDS/PROJ
+  - gdal
+  - rasterio
+  - rioxarray
+  - xarray=2024.02.0
+  - netcdf4=1.6.5
+  - h5py=3.10.0
+  - fiona
+  - cartopy
+  - s3fs=2024.6.0
+
+  # --- Viz / notebook ---
+  - jupyterlab=4.2.5
+  - ipykernel=6.29.5
+  - ipywidgets=8.1.3
+  - matplotlib=3.8.4
+  # (temporarily unpinned/removed viz stack to satisfy solver with RAPIDS)
+  # - bokeh
+  # - holoviews
+  # - hvplot
+  # - datashader
+  - scikit-image=0.23.2
+  - scikit-learn=1.4.2
+
+  # --- Geoparquet (Arrow/Parquet IO for Geo) ---
+  # Let RAPIDS resolve Arrow version
+  # - pyarrow
+  # - pyarrow-hotfix
+
+  # --- GPU acceleration (CUDA 12.2 + RAPIDS 24.12) ---
+  - cuda-version=12.2
+  - rapids=24.12
+
+  # --- Columnar + SQL: DuckDB / Polars / JupySQL (new) ---
+  - duckdb=1.1.3            # in-process OLAP DB; load 'spatial' extension at runtime
+  # Let RAPIDS/cudf-polars pick a compatible Polars (>=1.11,<1.15)
+  - polars
+  - sqlalchemy=2.0.30       # JupySQL connection layer
+  - sqlparse=0.5.1          # parser helper used by clients
+
+  # --- Optional helpers ---
+  # - pyarrowfs-adlgen2  # unavailable on current conda channels; consider pip install
+  - tzdata=2024a
+
+  # --- Pip extras ---
+  - pip:
+      - jupysql==0.10.13    # SQL magic for notebooks (%%sql)
+      - leafmap==0.33.4
+      - keplergl==0.3.2
+      - pydeck==0.9.1

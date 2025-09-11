@@ -1,0 +1,38 @@
+{
+  "name": "gis_conda_dev",
+  "build": { "dockerfile": "Dockerfile" },
+  "hostRequirements": { "gpu": "required" },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "features": {},
+  "forwardPorts": [8888],
+  "portsAttributes": {
+    "8888": { "label": "Jupyter" }
+  },
+  "containerEnv": {
+    "PYTHONUNBUFFERED": "1"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/envs/gis/bin/python",
+        "jupyter.jupyterServerType": "local",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-vscode-remote.remote-containers",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "runArgs": ["--name", "gis_conda_dev"],
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "remoteUser": "mambauser",
+  "overrideCommand": false,
+  "mounts": [
+    "source=${localWorkspaceFolder}/data,target=${containerWorkspaceFolder}/data,type=bind",
+    "source=D:\\data,target=${containerWorkspaceFolder}/gis_local_data,type=bind"
+  ]
+}
