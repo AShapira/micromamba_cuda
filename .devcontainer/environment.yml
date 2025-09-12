@@ -62,6 +62,10 @@ dependencies:
   # - pyarrowfs-adlgen2  # unavailable on current conda channels; consider pip install
   - tzdata=2024a
 
+  # --- Git / GitHub CLI ---
+  - git
+  - gh                     # GitHub CLI for auth and repo operations
+
   # --- Pip extras ---
   - pip:
       - jupysql==0.10.13    # SQL magic for notebooks (%%sql)

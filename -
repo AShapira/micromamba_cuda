@@ -4,7 +4,11 @@
   "hostRequirements": { "gpu": "optional" },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "features": {},
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/git:1": { "version": "os-provided" },
+    "ghcr.io/devcontainers/features/ssh-agent:1": {}
+  },
   "forwardPorts": [8888],
   "portsAttributes": {
     "8888": { "label": "Jupyter" }
@@ -35,7 +39,8 @@
   "overrideCommand": false,
   "remoteEnv": {
     "GH_TOKEN": "${localEnv:GH_TOKEN}",
-    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
+    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
+    "SSH_AUTH_SOCK": "${containerEnv:SSH_AUTH_SOCK}"
   },
   "mounts": [
     "source=${localWorkspaceFolder}/data,target=${containerWorkspaceFolder}/data,type=bind"
