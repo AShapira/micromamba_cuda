@@ -54,3 +54,6 @@ node_modules/
 # Data (keep folder, ignore contents)
 data/**
 !data/.gitkeep
+
+# local volume mappings
+gis_data/**

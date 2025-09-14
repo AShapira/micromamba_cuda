@@ -43,9 +43,10 @@ dependencies:
   - scikit-learn=1.4.2
 
   # --- Geoparquet (Arrow/Parquet IO for Geo) ---
-  # Let RAPIDS resolve Arrow version
-  # - pyarrow
-  # - pyarrow-hotfix
+  # Ensure Arrow is available for GeoParquet IO (leave unpinned to
+  # remain compatible with RAPIDS cudf/pyarrow constraints)
+  - pyarrow
+  - pyarrow-hotfix
 
   # --- GPU acceleration (CUDA 12.2 + RAPIDS 24.12) ---
   - cuda-version=12.2

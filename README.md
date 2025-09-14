@@ -42,6 +42,9 @@ Key files:
 
 3) Data
 - Place files under `./data` on the host. They appear in the container at `/workspace/data`.
+- To mount an external host directory (for example `D:\\data`) into the container, add this line under `mounts` in `.devcontainer/devcontainer.json`:
+  `"source=D:\\data,target=/gis_data,type=bind,rw"`
+  Make sure the path exists and the drive is shared in Docker Desktop (Settings > Resources > File sharing). If it doesn’t exist or isn’t shared, container startup fails.
 
 4) GPU check (optional)
 - After the container starts, the post-create script prints versions and a CUDA availability line.
@@ -95,6 +98,6 @@ See detailed options and security tips in `.devcontainer/GITHUB_AUTH.md`.
 
 ## Notes
 
-- Container name: `gis_conda_dev`; workspace path inside: `/workspace`.
+ - Workspace path inside container: `/workspace`.
 - Python path in VS Code: `/opt/conda/envs/gis/bin/python`.
 - Port 8888 labeled as “Jupyter” in the Dev Container config.

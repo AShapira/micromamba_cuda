@@ -12,6 +12,8 @@ COPY --chown=$MAMBA_USER:$MAMBA_USER environment.yml /tmp/environment.yml
 RUN micromamba create -y -n ${ENV_NAME} -f /tmp/environment.yml && micromamba clean -a -y
 
 USER root
+# Install Git (and SSH client for SSH remotes)
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
 # Make env default for interactive shells (as root)
 RUN echo "micromamba activate ${ENV_NAME}" >> /etc/bash.bashrc
 USER $MAMBA_USER
