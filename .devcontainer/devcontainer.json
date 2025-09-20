@@ -8,6 +8,7 @@
   },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "containerName": "conda_gis_gpu",
   "features": {},
   "forwardPorts": [
     8888
@@ -33,7 +34,8 @@
         "ms-vscode-remote.remote-containers",
         "ms-azuretools.vscode-docker",
         "openai.chatgpt",
-        "GitHub.vscode-pull-request-github"
+        "GitHub.vscode-pull-request-github",
+        "mechatroner.rainbow-csv"
       ]
     }
   },
