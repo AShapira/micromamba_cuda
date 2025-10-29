@@ -57,3 +57,6 @@ data/**
 
 # local volume mappings
 gis_data/**
+
+# Devcontainer local override (user-specific)
+.devcontainer/devcontainer.local.json

@@ -42,9 +42,13 @@ Key files:
 
 3) Data
 - Place files under `./data` on the host. They appear in the container at `/workspace/data`.
-- To mount an external host directory (for example `D:\\data`) into the container, add this line under `mounts` in `.devcontainer/devcontainer.json`:
-  `"source=D:\\data,target=/gis_data,type=bind,rw"`
-  Make sure the path exists and the drive is shared in Docker Desktop (Settings > Resources > File sharing). If it doesn’t exist or isn’t shared, container startup fails.
+- To mount an external host directory without breaking portability, create a local override file `.devcontainer/devcontainer.local.json` (not checked in) with one of the following:
+  - Using an environment variable (recommended):
+    `{ "mounts": [ "source=${localEnv:GIS_DATA_DIR},target=${containerWorkspaceFolder}/gis_data,type=bind,rw" ] }`
+    Then set `GIS_DATA_DIR` on your host to the desired path (e.g., `D:\\data`).
+  - Hardcoding a path (Windows example):
+    `{ "mounts": [ "source=c:\\\\data,target=${containerWorkspaceFolder}/gis_data,type=bind,rw" ] }`
+  Ensure the path exists and (on Docker Desktop) the drive is shared under Settings > Resources > File sharing. If the path isn’t accessible, remove or fix the local override.
 
 4) GPU check (optional)
 - After the container starts, the post-create script prints versions and a CUDA availability line.
