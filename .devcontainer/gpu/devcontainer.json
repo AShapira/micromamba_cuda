@@ -1,0 +1,17 @@
+{
+  "name": "gis_conda_gpu",
+  "extends": "../base/devcontainer.json",
+  "build": {
+    "dockerfile": "./Dockerfile",
+    "context": ".."
+  },
+  "hostRequirements": {
+    "gpu": "required"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/nvidia-container-toolkit:1": {}
+  },
+  "runArgs": [
+    "--gpus=all"
+  ]
+}

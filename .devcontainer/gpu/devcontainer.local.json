@@ -1,0 +1,8 @@
+{
+  "localEnv": {
+    "GIS_DATA_DIR": "C:\\Alex\\GIS_DATA_DIR"
+  },
+  "mounts": [
+    "source=${localEnv:GIS_DATA_DIR},target=${containerWorkspaceFolder}/gis_data,type=bind"
+  ]
+}

@@ -6,26 +6,48 @@ micromamba activate gis
 python -m ipykernel install --user --name=gis --display-name "Python (gis)"
 
 python - <<'PY'
-import cupy, cudf, cuspatial, pyarrow, geopandas, shapely
-import rasterio, fiona, pyproj
-import numba, numpy
+from importlib import import_module, util
 
-print("CUDA available via CuPy:", cupy.cuda.runtime.getDeviceCount() > 0)
-print("cuDF version:", cudf.__version__)
-print("cuSpatial version:", cuspatial.__version__)
-print("PyArrow:", pyarrow.__version__)
-print("GeoPandas:", geopandas.__version__)
-print("Shapely:", shapely.__version__)
-print("GDAL (rasterio):", getattr(rasterio, "__gdal_version__", "?"))
+def maybe_import(name):
+    if util.find_spec(name) is None:
+        print(f"{name}: not installed")
+        return None
+    module = import_module(name)
+    version = getattr(module, "__version__", "unknown")
+    print(f"{name}: {version}")
+    return module
+
+cupy = maybe_import("cupy")
+if cupy:
+    try:
+        print("CUDA available via CuPy:", cupy.cuda.runtime.getDeviceCount() > 0)
+    except Exception as exc:  # pragma: no cover
+        print("CUDA check failed:", exc)
+
+for mod in ("cudf", "cuspatial", "geopandas", "shapely", "rasterio", "fiona", "pyproj", "pyarrow", "numpy", "numba"):
+    module = maybe_import(mod)
+    if mod == "rasterio" and module is not None:
+        print("GDAL (rasterio):", getattr(module, "__gdal_version__", "?"))
 PY
 
 python - <<'PY'
-import duckdb, polars, pyarrow as pa
-print("DuckDB:", duckdb.__version__)
-print("Polars:", polars.__version__)
-print("PyArrow:", pa.__version__)
-con = duckdb.connect()
-print(con.sql("select 1 as ok").fetchall())
+from importlib import import_module, util
+
+def maybe_import(name):
+    if util.find_spec(name) is None:
+        print(f"{name}: not installed")
+        return None
+    module = import_module(name)
+    version = getattr(module, "__version__", "unknown")
+    print(f"{name}: {version}")
+    return module
+
+duckdb = maybe_import("duckdb")
+polars = maybe_import("polars")
+pa = maybe_import("pyarrow")
+if duckdb:
+    con = duckdb.connect()
+    print(con.sql("select 1 as ok").fetchall())
 PY
 
 # --- GitHub auth (token-based) ---

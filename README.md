@@ -1,107 +1,75 @@
-# GIS + RAPIDS Dev Container
+# GIS Dev Containers
 
-A reproducible geospatial data science environment with CUDA-accelerated RAPIDS, built on micromamba. Open the folder in a VS Code Dev Container to get Python, GPU libraries, Jupyter, and GitHub tooling preconfigured.
+A reproducible geospatial data science environment built on micromamba. Two Dev Container variants let you choose between a CPU-only stack or a CUDA-accelerated RAPIDS stack whenever you reopen the repository.
 
-## What’s Inside
+## Container Variants
+- **CPU** (`.devcontainer/cpu/devcontainer.json`) – Uses the Ubuntu Jammy micromamba image and installs a pure CPU geospatial toolkit (GeoPandas, GDAL, Rasterio, Cartopy, plus the viz stack and DuckDB/Polars).
+- **GPU** (`.devcontainer/gpu/devcontainer.json`) – Builds from the CUDA 12.2 micromamba image, adds RAPIDS 24.12 (cuDF, cuSpatial), CuPy, and CUDA helpers, and enables the NVIDIA container toolkit with `--gpus=all`.
 
-- CUDA-enabled base image (CUDA 12.2) with micromamba environment `gis`.
-- RAPIDS 24.12 (cuDF, cuSpatial) and core geo stack (GeoPandas, Shapely, Rasterio, GDAL).
-- JupyterLab, IPyKernel, and VS Code Jupyter integration.
-- Git + GitHub CLI (`gh`) + SSH agent forwarding.
-- Data bind mount of `./data` to `/workspace/data` inside the container.
+Both variants inherit shared settings (mounts, VS Code extensions, environment variables, port forwarding, GitHub token passthrough, etc.) from `.devcontainer/base/devcontainer.json`.
+
+## What's Inside
+- Conda environment `gis` with JupyterLab, IPyKernel, GitHub CLI, and the core Python geo libraries.
+- Post-create script that registers the kernel and reports which optional GPU packages were detected.
+- Data bind mount of `./data` on the host to `/workspace/data` in the container (plus any overrides you add in each variant’s `devcontainer.local.json`).
+- GPU variant only: RAPIDS, CuPy, CUDA runtime environment, RMM/UCX tuning.
 
 Key files:
-- `.devcontainer/devcontainer.json` – Dev container definition and features
-- `.devcontainer/Dockerfile` – Base image and environment creation
-- `.devcontainer/environment.yml` – Conda environment spec (`gis`)
-- `.devcontainer/postCreate.sh` – Post-create checks and kernel registration
-- `.devcontainer/GITHUB_AUTH.md` – Safe GitHub sign-in options
-- `code/overture_analysis/` – Example notebooks
+- `.devcontainer/base/devcontainer.json` – Shared container settings.
+- `.devcontainer/cpu/Dockerfile` and `environment.yml` – CPU build context.
+- `.devcontainer/gpu/Dockerfile` and `environment.yml` – GPU build context.
+- `.devcontainer/cpu/devcontainer.local.json` / `.devcontainer/gpu/devcontainer.local.json` – Per-variant overrides (edit locally for custom mounts, env vars).
+- `.devcontainer/postCreate.sh` – Post-create automation (GPU-aware).
+- `.devcontainer/GITHUB_AUTH.md` – GitHub authentication guidance.
 
 ## Prerequisites
-
-- Docker Desktop (Linux, macOS, or Windows + WSL2)
-- VS Code with “Dev Containers” extension
-- NVIDIA GPU (optional) + current NVIDIA driver
-  - Linux: NVIDIA Container Toolkit
-  - Windows: WSL2 + GPU support in Docker
+- Docker Desktop (Linux, macOS, or Windows with WSL2).
+- VS Code with the Dev Containers extension (or GitHub Codespaces).
+- For GPU work: NVIDIA driver plus the NVIDIA Container Toolkit (Linux) or WSL2 GPU support (Windows).
 
 ## Getting Started
+1. When prompted to reopen in a container, pick **gis_conda_cpu** or **gis_conda_gpu**. You can switch later via “Dev Containers: Reopen in Container…” and choosing the other profile.
+2. After the container builds, activate the environment as needed:
+   ```bash
+   micromamba activate gis
+   ```
+3. Launch Jupyter if you prefer a browser session:
+   ```bash
+   jupyter lab --ip 0.0.0.0 --port 8888 --no-browser
+   ```
+4. Drop host data into `./data` or customize the variant’s `devcontainer.local.json` to add extra mounts. Example:
+   ```json
+   {
+     "mounts": [
+       "source=${localEnv:GIS_DATA_DIR},target=${containerWorkspaceFolder}/gis_data,type=bind,rw"
+     ]
+   }
+   ```
 
-1) Open in Dev Container
-- In VS Code: “Dev Containers: Reopen in Container” (or use the green corner button).
-- The container builds the `gis` environment and registers a Jupyter kernel.
-
-2) Jupyter usage
-- Use VS Code notebooks or open a terminal and run:
-  ```bash
-  micromamba activate gis
-  jupyter lab --ip 0.0.0.0 --port 8888 --no-browser
-  ```
-- Default port 8888 is forwarded. Select the kernel “Python (gis)”.
-
-3) Data
-- Place files under `./data` on the host. They appear in the container at `/workspace/data`.
-- To mount an external host directory without breaking portability, create a local override file `.devcontainer/devcontainer.local.json` (not checked in) with one of the following:
-  - Using an environment variable (recommended):
-    `{ "mounts": [ "source=${localEnv:GIS_DATA_DIR},target=${containerWorkspaceFolder}/gis_data,type=bind,rw" ] }`
-    Then set `GIS_DATA_DIR` on your host to the desired path (e.g., `D:\\data`).
-  - Hardcoding a path (Windows example):
-    `{ "mounts": [ "source=c:\\\\data,target=${containerWorkspaceFolder}/gis_data,type=bind,rw" ] }`
-  Ensure the path exists and (on Docker Desktop) the drive is shared under Settings > Resources > File sharing. If the path isn’t accessible, remove or fix the local override.
-
-4) GPU check (optional)
-- After the container starts, the post-create script prints versions and a CUDA availability line.
-- From a terminal:
-  ```python
-  import cupy; print(cupy.cuda.runtime.getDeviceCount() > 0)
-  ```
-  True indicates the container can access your GPU.
+## GPU Quick Check
+Inside the GPU container run:
+```python
+import cupy, cudf, cuspatial
+print("CUDA devices:", cupy.cuda.runtime.getDeviceCount())
+print("cuDF:", cudf.__version__, "cuSpatial:", cuspatial.__version__)
+```
+The post-create script also prints availability if those packages are present.
 
 ## GitHub Authentication
-
-This project includes Git and GitHub CLI with safe, consistent sign-in methods.
-- Recommended: GitHub CLI over HTTPS
-  ```bash
-  gh auth login --hostname github.com --git-protocol https --web
-  gh auth setup-git
-  gh auth status
-  ```
-- SSH with agent forwarding (if you already use SSH keys on the host)
-- Env token passthrough for CI/advanced users (`GH_TOKEN`/`GITHUB_TOKEN`)
-
-See detailed options and security tips in `.devcontainer/GITHUB_AUTH.md`.
+Git and GitHub CLI are preinstalled. Recommended flow:
+```bash
+gh auth login --hostname github.com --git-protocol https --web
+gh auth setup-git
+gh auth status
+```
+Token passthrough (`GH_TOKEN`/`GITHUB_TOKEN`) is supported, and SSH agent forwarding works if you enable it on the host. See `.devcontainer/GITHUB_AUTH.md` for details.
 
 ## Common Tasks
-
-- Activate environment in a shell:
-  ```bash
-  micromamba activate gis
-  ```
-- Run a quick check of RAPIDS/geo stack:
-  ```bash
-  python - <<'PY'
-  import cupy, cudf, cuspatial, geopandas, rasterio
-  print('CUDA devices > 0:', cupy.cuda.runtime.getDeviceCount() > 0)
-  print('cuDF:', cudf.__version__, 'cuSpatial:', cuspatial.__version__)
-  print('GeoPandas:', geopandas.__version__, 'GDAL via rasterio:', getattr(rasterio, '__gdal_version__', '?'))
-  PY
-  ```
-- Work with notebooks in `code/overture_analysis/` (e.g., `intro.ipynb`).
+- Run the optional smoke check: `.devcontainer/_smoke.py` exercises the GPU stack (only works if RAPIDS is installed).
+- Explore notebooks in `code/overture_analysis/`.
+- Confirm GitHub CLI status: `gh auth status`.
 
 ## Troubleshooting
-
-- No GPU detected
-  - Ensure host NVIDIA driver is installed and Docker has GPU access.
-  - On Windows, enable WSL2 integration and GPU support in Docker.
-  - Rebuild the container after driver/toolkit changes.
-- Build failures on geospatial libs
-  - Rebuild without cache; ensure Docker has sufficient RAM.
-- Credential issues with GitHub
-  - Run `gh auth login` and `gh auth setup-git`; verify with `gh auth status`.
-
-## Notes
-
- - Workspace path inside container: `/workspace`.
-- Python path in VS Code: `/opt/conda/envs/gis/bin/python`.
-- Port 8888 labeled as “Jupyter” in the Dev Container config.
+- **No GPU detected:** Verify host driver/toolkit installation and rebuild the GPU container without cache.
+- **Conda solve issues:** Rebuild the container; the CPU and GPU environments are separate, so confirm you opened the intended profile.
+- **Data mount missing:** Ensure the host path exists and, on Docker Desktop, that the drive is shared.

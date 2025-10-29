@@ -1,17 +1,7 @@
 {
-  "name": "gis_conda_dev",
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
-  "hostRequirements": {
-    "gpu": "optional"
-  },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "features": {},
-  "forwardPorts": [
-    8888
-  ],
+  "forwardPorts": [8888],
   "portsAttributes": {
     "8888": {
       "label": "Jupyter"
