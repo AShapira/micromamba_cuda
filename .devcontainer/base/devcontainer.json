@@ -34,8 +34,5 @@
   "remoteEnv": {
     "GH_TOKEN": "${localEnv:GH_TOKEN}",
     "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
-  },
-  "mounts": [
-    "source=${localWorkspaceFolder}/data,target=${containerWorkspaceFolder}/data,type=bind"
-  ]
+  }
 }

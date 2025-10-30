@@ -5,6 +5,22 @@
     "dockerfile": "./Dockerfile",
     "context": ".."
   },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-vscode-remote.remote-containers",
+        "ms-azuretools.vscode-docker",
+        "openai.chatgpt",
+        "GitHub.vscode-pull-request-github",
+        "mechatroner.rainbow-csv"
+      ]
+    }
+  },
+  "mounts": [
+    "source=${localEnv:GIS_DATA_DIR:-${localWorkspaceFolder}/gis_data},target=${containerWorkspaceFolder}/gis_data,type=bind"
+  ],
   "hostRequirements": {
     "gpu": "required"
   },

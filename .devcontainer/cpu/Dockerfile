@@ -8,7 +8,7 @@ ARG ENV_NAME=gis
 SHELL ["/bin/bash", "-lc"]
 
 # Copy env and create it
-COPY --chown=$MAMBA_USER:$MAMBA_USER .devcontainer/cpu/environment.yml /tmp/environment.yml
+COPY --chown=$MAMBA_USER:$MAMBA_USER cpu/environment.yml /tmp/environment.yml
 RUN micromamba create -y -n ${ENV_NAME} -f /tmp/environment.yml && micromamba clean -a -y
 
 USER root
