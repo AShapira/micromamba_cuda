@@ -9,7 +9,9 @@ For each GeoParquet file under the input directory the script:
 
 It writes a JSON report to data/results (or a user supplied path) with per-file
 and aggregate counts. No sampling randomness is used. Optionally writes sampled
-rows that have multiple sources into a single GeoParquet (EPSG:4326).
+rows that have multiple sources into a single GeoParquet (EPSG:4326). Optional
+GeoJSON logging can capture up to 100 example buildings for every source
+combination observed in the sample.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import concurrent.futures
 import json
 import logging
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,8 @@ from typing import Iterable, Sequence
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from shapely import wkb
+from shapely.geometry import mapping
 
 LOGGER = logging.getLogger("building_sources")
 
@@ -38,6 +42,8 @@ DEFAULT_OUTPUT_PATH = Path("/workspaces/micromamba_cuda/data/results/buildings_s
 DEFAULT_SAMPLE_SIZE = 1_000
 DEFAULT_BATCH_ROWS = 50_000
 DEFAULT_MULTI_OUTPUT: Path | None = None
+DEFAULT_SAMPLES_GEOJSON: Path | None = None
+MAX_FEATURES_PER_COMBO = 100
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,14 @@ class FileSummary:
     combination_counts: Counter[str]
     rows_with_multiple_sources: int
     rows_with_no_sources: int
+
+
+@dataclass(frozen=True)
+class _SampleRow:
+    normalized: tuple[str, ...]
+    geometry: object | None
+    raw_sources: object | None
+    properties: dict
 
 
 def configure_logging(level: str) -> None:
@@ -89,22 +103,50 @@ def _combo_label(combo: tuple[str, ...]) -> str:
     return "+".join(combo)
 
 
-def _sample_first_sources(
+def _sample_first_rows(
     parquet_file: pq.ParquetFile,
     sample_size: int,
     batch_rows: int,
-) -> tuple[list[tuple[str, ...]], int]:
-    """Collect the first `sample_size` normalized sources tuples from a Parquet file."""
-    sample: list[tuple[str, ...]] = []
+    include_geometry: bool,
+    include_properties: bool,
+) -> tuple[list[_SampleRow], int]:
+    """Collect the first `sample_size` rows with normalized sources (and geometry if requested)."""
+    sample: list[_SampleRow] = []
     total_rows = 0
     target = sample_size
     batch_size = min(batch_rows, sample_size)
+    columns = None if include_properties else (["sources"] if not include_geometry else ["geometry", "sources"])
 
-    for batch in parquet_file.iter_batches(columns=["sources"], batch_size=batch_size):
-        values = batch.column(0).to_pylist()
-        total_rows += len(values)
-        for normalized in map(_normalize_sources, values):
-            sample.append(normalized)
+    for batch in parquet_file.iter_batches(columns=columns, batch_size=batch_size):
+        total_rows += batch.num_rows
+        if include_properties:
+            names = batch.schema.names
+            columns_py = {name: batch.column(i).to_pylist() for i, name in enumerate(names)}
+            geometries = columns_py.get("geometry", [None] * batch.num_rows)
+            sources = columns_py.get("sources", [None] * batch.num_rows)
+        else:
+            if include_geometry:
+                geometries = batch.column(0).to_pylist()
+                sources = batch.column(1).to_pylist()
+            else:
+                geometries = [None] * batch.num_rows
+                sources = batch.column(0).to_pylist()
+
+        for row_idx, (geom_value, raw_sources) in enumerate(zip(geometries, sources)):
+            normalized = _normalize_sources(raw_sources)
+            properties: dict
+            if include_properties:
+                properties = {name: columns_py[name][row_idx] for name in names if name != "geometry"}
+            else:
+                properties = {}
+            sample.append(
+                _SampleRow(
+                    normalized=normalized,
+                    geometry=geom_value,
+                    raw_sources=raw_sources,
+                    properties=properties,
+                )
+            )
             if len(sample) >= target:
                 return sample, total_rows
 
@@ -112,7 +154,7 @@ def _sample_first_sources(
 
 
 def _count_sample(
-    sample: list[tuple[str, ...]],
+    sample_rows: list[_SampleRow],
     filename: str,
     total_rows_seen: int,
 ) -> FileSummary:
@@ -121,7 +163,8 @@ def _count_sample(
     multi = 0
     none = 0
 
-    for combo in sample:
+    for row in sample_rows:
+        combo = row.normalized
         label = _combo_label(combo)
         combination_counts[label] += 1
         if not combo:
@@ -134,7 +177,7 @@ def _count_sample(
 
     return FileSummary(
         file=filename,
-        sampled_rows=len(sample),
+        sampled_rows=len(sample_rows),
         total_rows_seen=total_rows_seen,
         dataset_counts=dataset_counts,
         combination_counts=combination_counts,
@@ -143,13 +186,58 @@ def _count_sample(
     )
 
 
+def _build_multi_batches_from_samples(sample_rows: list[_SampleRow]) -> list[pa.RecordBatch]:
+    multi_rows = [row for row in sample_rows if len(row.normalized) > 1 and row.geometry is not None]
+    if not multi_rows:
+        return []
+
+    geometry_array = pa.array([row.geometry for row in multi_rows], type=pa.binary())
+    sources_array = pa.array([row.raw_sources for row in multi_rows])
+    return [pa.record_batch({"geometry": geometry_array, "sources": sources_array})]
+
+
+def _geometry_to_mapping(value: object | None) -> dict | None:
+    if value is None:
+        return None
+    try:
+        geom = wkb.loads(value)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if geom.is_empty:
+        return None
+    return mapping(geom)
+
+
+def _collect_combo_features(sample_rows: list[_SampleRow], file_name: str) -> list[tuple[str, dict]]:
+    features: list[tuple[str, dict]] = []
+    for row in sample_rows:
+        if row.geometry is None:
+            continue
+        geom_mapping = _geometry_to_mapping(row.geometry)
+        if geom_mapping is None:
+            continue
+
+        combo_label = _combo_label(row.normalized)
+        props = dict(row.properties)
+        props.update({"file": file_name, "combo": combo_label, "sources": row.raw_sources})
+        feature = {
+            "type": "Feature",
+            "geometry": geom_mapping,
+            "properties": props,
+        }
+        features.append((combo_label, feature))
+    return features
+
+
 def _process_file(
     path: Path,
     sample_size: int,
     batch_rows: int,
     capture_multi: bool,
-) -> tuple[FileSummary, list[pa.RecordBatch]]:
+    capture_samples_geojson: bool,
+) -> tuple[FileSummary, list[pa.RecordBatch], list[tuple[str, dict]]]:
     multi_batches: list[pa.RecordBatch] = []
+    combo_features: list[tuple[str, dict]] = []
     try:
         parquet_file = pq.ParquetFile(path)
     except Exception as exc:  # pragma: no cover - defensive logging
@@ -163,30 +251,34 @@ def _process_file(
             rows_with_multiple_sources=0,
             rows_with_no_sources=0,
         )
-        return empty, multi_batches
+        return empty, multi_batches, combo_features
 
     has_geometry = "geometry" in parquet_file.schema.names
     if capture_multi and not has_geometry:
         LOGGER.warning("%s: no geometry column; skipping multi-source export for this file", path)
         capture_multi = False
+    if capture_samples_geojson and not has_geometry:
+        LOGGER.warning("%s: no geometry column; skipping GeoJSON sampling for this file", path)
 
-    sample, total_rows = _sample_first_sources(parquet_file, sample_size, batch_rows)
+    include_geometry = has_geometry and (capture_multi or capture_samples_geojson)
+    include_properties = capture_samples_geojson
+    sample_rows, total_rows = _sample_first_rows(
+        parquet_file,
+        sample_size,
+        batch_rows,
+        include_geometry=include_geometry,
+        include_properties=include_properties,
+    )
 
-    if capture_multi and sample:
-        # Re-read just the rows we inspected to capture geometry + sources.
-        # This keeps the fast first-N behavior while still exporting relevant rows.
-        batch_size = min(batch_rows, sample_size)
-        rows_remaining = len(sample)
-        for batch in parquet_file.iter_batches(columns=["geometry", "sources"], batch_size=batch_size):
-            values = batch.column(1).to_pylist()
-            take_indices = [i for i, v in enumerate(values) if len(_normalize_sources(v)) > 1]
-            if take_indices:
-                multi_batches.append(batch.take(pa.array(take_indices, type=pa.int64())))
-            rows_remaining -= len(values)
-            if rows_remaining <= 0:
-                break
+    summary = _count_sample(sample_rows, path.name, total_rows)
 
-    return _count_sample(sample, path.name, total_rows), multi_batches
+    if capture_multi and include_geometry and sample_rows:
+        multi_batches.extend(_build_multi_batches_from_samples(sample_rows))
+
+    if capture_samples_geojson and include_geometry and sample_rows:
+        combo_features = _collect_combo_features(sample_rows, path.name)
+
+    return summary, multi_batches, combo_features
 
 
 def _counter_to_sorted_dict(counter: Counter[str]) -> dict[str, int]:
@@ -270,6 +362,33 @@ def _write_multi_output(batches: list[pa.RecordBatch], output_path: Path) -> Non
     LOGGER.info("Wrote %s multi-source row(s) to %s", table.num_rows, output_path)
 
 
+def _write_geojson_samples(combo_samples: dict[str, list[dict]], output_path: Path) -> None:
+    total_features = sum(len(samples) for samples in combo_samples.values())
+    if total_features == 0:
+        LOGGER.info("No GeoJSON samples collected; skipping write.")
+        return
+
+    features: list[dict] = []
+    for samples in combo_samples.values():
+        features.extend(samples)
+
+    feature_collection = {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(feature_collection, f, indent=2)
+
+    LOGGER.info(
+        "Wrote %s sample feature(s) across %s combination(s) to %s",
+        total_features,
+        len(combo_samples),
+        output_path,
+    )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -312,7 +431,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--multi-output",
         type=Path,
         default=DEFAULT_MULTI_OUTPUT,
-        help="Optional GeoParquet path to write sampled rows that have multiple sources.",
+        help="Deprecated: multi-source GeoParquet output is disabled; kept for compatibility.",
+    )
+    parser.add_argument(
+        "--samples-geojson",
+        type=Path,
+        default=DEFAULT_SAMPLES_GEOJSON,
+        help="Optional GeoJSON path; writes up to 100 sampled buildings per source combination.",
     )
     parser.add_argument(
         "--log-level",
@@ -347,9 +472,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.max_workers,
     )
 
-    capture_multi = args.multi_output is not None
+    capture_multi = False
+    if args.multi_output is not None:
+        LOGGER.info("Multi-output write disabled; ignoring --multi-output=%s", args.multi_output)
+    capture_samples_geojson = args.samples_geojson is not None
     summaries: list[FileSummary] = []
-    multi_batches_all: list[pa.RecordBatch] = []
+    combo_samples: dict[str, list[dict]] = defaultdict(list)
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
             executor.submit(
@@ -358,19 +486,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.sample_size,
                 args.batch_rows,
                 capture_multi,
+                capture_samples_geojson,
             ): path
             for path in parquet_files
         }
         for future in concurrent.futures.as_completed(futures):
             path = futures[future]
             try:
-                summary, multi_batches = future.result()
+                summary, multi_batches, combo_features = future.result()
             except Exception as exc:  # pragma: no cover - defensive logging
                 LOGGER.error("Failed processing %s: %s", path, exc)
                 continue
             summaries.append(summary)
-            if capture_multi and multi_batches:
-                multi_batches_all.extend(multi_batches)
+            if capture_samples_geojson and combo_features:
+                for combo_label, feature in combo_features:
+                    bucket = combo_samples[combo_label]
+                    if len(bucket) < MAX_FEATURES_PER_COMBO:
+                        bucket.append(feature)
             LOGGER.info("%s: sampled %s rows", path.name, summary.sampled_rows)
 
     report = {
@@ -389,8 +521,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     LOGGER.info("Wrote report to %s", output_path)
 
-    if capture_multi and args.multi_output is not None:
-        _write_multi_output(multi_batches_all, args.multi_output.expanduser())
+    if capture_samples_geojson and args.samples_geojson is not None:
+        _write_geojson_samples(combo_samples, args.samples_geojson.expanduser())
 
     return 0
 
