@@ -59,3 +59,26 @@
   --threads-per-worker 8 \
   --chunk-size 400000
   ```
+
+- **Aggregate region dataset counts (STRtree map/reduce, restartable)**  
+  STRtree-based per-file aggregation (s1 only) with prepared polygons; uses STRtree indices directly and `covers` to avoid zero-count bug. Writes per-file Parquets in `--output-dir`, then merges to a final GeoParquet with all region columns. Skips existing per-file outputs, so reruns resume; use `--no-skip-existing` (or clear the output dir) to regenerate prior zero-count runs. Benchmark on first file with `--row-limit 500000` processed ~600k rows in ~8s on one worker (~74k rows/s). Recommended settings below balance throughput vs. memory.  
+  ```
+  /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/aggregate_region_dataset_counts_strtree.py \
+  data/results/buildings_source_summary \
+  data/results/region_area-2025-10-22.0.parquet \
+  --output-dir data/results/region_dataset_counts_strtree \
+  --final-output data/results/region_area-2025-10-22.0_dataset_counts_strtree.parquet \
+  --max-workers 12 \
+  --batch-size 400000 \
+  --no-skip-existing
+  ```
+
+  ```
+  /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/aggregate_region_dataset_counts_strtree.py \
+  data/results/buildings_source_summary \
+  data/results/country_area-2025-10-22.0.parquet \
+  --output-dir data/results/country_dataset_counts_strtree \
+  --final-output data/results/country_area-2025-10-22.0_dataset_counts_strtree.parquet \
+  --max-workers 12 \
+  --batch-size 400000
+  ```
