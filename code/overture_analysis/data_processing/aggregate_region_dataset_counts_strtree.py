@@ -2,11 +2,12 @@
 """
 Aggregate building dataset counts per region using a Shapely STRtree on regions.
 
-For each summary GeoParquet file (geometry point + s1/s2 ids), the script:
+For each summary GeoParquet file (geometry point + s1/s2 ids + area/vertex stats), the script:
 1) Streams the file in large batches.
 2) Uses a region STRtree (built once per worker) to find candidate polygons.
 3) Counts buildings by region and dataset (s1 only; s2 ignored).
-4) Writes a per-file GeoParquet with all region columns plus dataset count columns.
+4) Aggregates area_sqm and vertex_count per region and dataset.
+5) Writes a per-file GeoParquet with all region columns plus dataset count/sum columns.
 
 After all per-file outputs exist, a final merged GeoParquet can be produced by
 row-wise summing the per-file counts. Skips processing for files whose outputs
@@ -141,10 +142,12 @@ def _process_summary(task: Task) -> tuple[str, str]:
     region_count = len(WORKER_REGION_IDX)
     dataset_count = len(WORKER_DATASET_COLUMNS)
     counts = np.zeros((region_count, dataset_count), dtype=np.int64)
+    area_sums = np.zeros_like(counts, dtype=np.int64)
+    vertex_sums = np.zeros_like(counts, dtype=np.int64)
 
     processed = 0
     next_progress = LOG_PROGRESS_EVERY
-    for batch in pq_file.iter_batches(columns=["geometry", "s1"], batch_size=task.batch_size):
+    for batch in pq_file.iter_batches(columns=["geometry", "s1", "area_sqm", "vertex_count"], batch_size=task.batch_size):
         geom_wkb = batch.column(0).to_numpy(zero_copy_only=False)
         points = shapely_from_wkb(geom_wkb)
 
@@ -153,6 +156,16 @@ def _process_summary(task: Task) -> tuple[str, str]:
             zero_array = pa.array(np.zeros(len(s1_array), dtype=np.int8), type=pa.int8())
             s1_array = pc.coalesce(s1_array, zero_array)
         s1_np = s1_array.to_numpy(zero_copy_only=False)
+
+        area_array = batch.column(2)
+        if area_array.null_count:
+            area_array = pc.fill_null(area_array, 0)
+        area_np = area_array.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+
+        vertex_array = batch.column(3)
+        if vertex_array.null_count:
+            vertex_array = pc.fill_null(vertex_array, 0)
+        vertex_np = vertex_array.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
 
         if len(points) and WORKER_TREE is not None and WORKER_PREPARED is not None:
             for idx, pt in enumerate(points):
@@ -163,6 +176,8 @@ def _process_summary(task: Task) -> tuple[str, str]:
                 for ridx in candidate_idx:
                     if WORKER_PREPARED[ridx].covers(pt):
                         counts[ridx, ds_idx] += 1
+                        area_sums[ridx, ds_idx] += area_np[idx]
+                        vertex_sums[ridx, ds_idx] += vertex_np[idx]
 
         processed += batch.num_rows
         while processed >= next_progress:
@@ -173,13 +188,17 @@ def _process_summary(task: Task) -> tuple[str, str]:
 
     # Write per-file counts as Arrow Table (geometry retained for GeoParquet friendliness)
     arrays = []
-    fields = []
+    names = []
     # geometry + all region columns are written later by caller
     for idx, col in enumerate(WORKER_DATASET_COLUMNS):
         arrays.append(pa.array(counts[:, idx], type=pa.int64()))
-        fields.append(pa.field(col.column_name, pa.int64()))
+        names.append(col.column_name)
+        arrays.append(pa.array(area_sums[:, idx], type=pa.int64()))
+        names.append(f"area_{col.column_name}")
+        arrays.append(pa.array(vertex_sums[:, idx], type=pa.int64()))
+        names.append(f"vertices_{col.column_name}")
 
-    per_file_table = pa.Table.from_arrays(arrays, names=[f.name for f in fields])
+    per_file_table = pa.Table.from_arrays(arrays, names=names)
     pq.write_table(per_file_table, output_path, compression="ZSTD")
     return input_path.name, f"wrote {processed} rows"
 
@@ -230,7 +249,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         for path in summary_files
     ]
 
-    configure_logging(args.log_level)
+    log_path = output_dir / "aggregate_region_dataset_counts_strtree.log"
+    configure_logging(args.log_level, log_path)
+    LOGGER.info("Writing log to %s", log_path)
     worker_count = max(1, min(args.max_workers, len(tasks)))
     LOGGER.info("Processing %s file(s) with %s worker(s)", len(tasks), worker_count)
 
@@ -248,18 +269,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.info("Merging per-file outputs into %s", args.final_output)
         # Start with zeros; shape = regions x dataset columns
         total_counts = np.zeros((len(region_idx), len(dataset_columns)), dtype=np.int64)
+        total_area = np.zeros_like(total_counts, dtype=np.int64)
+        total_vertices = np.zeros_like(total_counts, dtype=np.int64)
         for task in tasks:
             out_path = task.output_path
             if not out_path.exists():
+                LOGGER.warning("Skipping missing per-file output %s", out_path)
                 continue
-            table = pq.read_table(out_path)
+            cols_to_read = []
+            for col in dataset_columns:
+                cols_to_read.append(col.column_name)
+                cols_to_read.append(f"area_{col.column_name}")
+                cols_to_read.append(f"vertices_{col.column_name}")
+            table = pq.read_table(out_path, columns=cols_to_read)
             counts = np.vstack([np.array(table.column(col.column_name)) for col in dataset_columns]).T
+            areas = np.vstack([np.array(table.column(f"area_{col.column_name}")) for col in dataset_columns]).T
+            vertices = np.vstack([np.array(table.column(f"vertices_{col.column_name}")) for col in dataset_columns]).T
             total_counts += counts
+            total_area += areas
+            total_vertices += vertices
 
-        # Build final table: all region columns + dataset count columns
+        # Build final table: all region columns + dataset count/sum columns
         final_cols = {name: regions_table.column(name) for name in region_columns}
         for idx, col in enumerate(dataset_columns):
             final_cols[col.column_name] = pa.array(total_counts[:, idx], type=pa.int64())
+            final_cols[f"area_{col.column_name}"] = pa.array(total_area[:, idx], type=pa.int64())
+            final_cols[f"vertices_{col.column_name}"] = pa.array(total_vertices[:, idx], type=pa.int64())
         final_table = pa.table(final_cols, schema=None)
         pq.write_table(final_table, args.final_output.expanduser(), compression="ZSTD")
         LOGGER.info("Wrote %s", args.final_output)

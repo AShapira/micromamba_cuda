@@ -6,9 +6,11 @@ For every GeoParquet in the input directory a summary GeoParquet is written to
 data/results/buildings_source_summary (or a user supplied directory). Each summary
 row corresponds to one building row and contains:
 * geometry: Point geometry representing the center of the original bbox
-* id: Original building id
 * s1: ID of the first source dataset (0 for unlisted/unknown)
 * s2: ID of the second source dataset when present (0 when not present)
+* area_sqm: Geodesic area of the building footprint in square meters (stored as int)
+* vertex_count: Count of coordinate vertices in the footprint (excluding closing coordinate duplicates)
+* height: Height value from the source data (if present)
 
 The script also writes a JSON log with aggregate and per-file dataset_counts and
 combination_counts, and records execution time.
@@ -28,8 +30,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from pyproj import Geod
 import pyarrow as pa
 import pyarrow.parquet as pq
+from shapely import from_wkb as shapely_from_wkb
+from shapely import get_num_coordinates
 from shapely import points as shapely_points
 from shapely import to_wkb as shapely_to_wkb
 
@@ -54,6 +59,7 @@ DATASET_ID_MAP: dict[str, int] = {
 
 ID_TO_NAME = {v: k for k, v in DATASET_ID_MAP.items()}
 UNKNOWN_ID = 0
+GEOD = Geod(ellps="WGS84")
 
 
 def _build_geo_metadata(crs: str = "EPSG:4326") -> dict[bytes, bytes]:
@@ -96,22 +102,15 @@ class FileCounts:
     rows: int = 0
 
 
-SUMMARY_SCHEMA_BASE = pa.schema(
-    [
-        pa.field("geometry", pa.binary()),
-        pa.field("id", pa.string()),
-        pa.field("s1", pa.int32()),
-        pa.field("s2", pa.int32()),
-    ]
-)
-
-
-def _make_summary_schema(id_type: pa.DataType) -> pa.Schema:
+def _make_summary_schema() -> pa.Schema:
     return pa.schema(
         [
             pa.field("geometry", pa.binary()),
             pa.field("s1", pa.int8()),
             pa.field("s2", pa.int8()),
+            pa.field("area_sqm", pa.int32()),
+            pa.field("vertex_count", pa.int16()),
+            pa.field("height", pa.int16()),
         ]
     ).with_metadata(_build_geo_metadata())
 
@@ -151,17 +150,37 @@ def _combo_label(id_list: list[int]) -> str:
     return "+".join(ID_TO_NAME.get(i, "other") for i in id_list)
 
 
+def _unique_vertex_count(geom) -> int | None:
+    """Return vertex count excluding duplicated closing coordinate for polygon rings."""
+    if geom is None:
+        return None
+    if geom.geom_type == "Polygon":
+        count = max(len(geom.exterior.coords) - 1, 0)
+        for ring in geom.interiors:
+            count += max(len(ring.coords) - 1, 0)
+        return count
+    if geom.geom_type == "MultiPolygon":
+        total = 0
+        for poly in geom.geoms:
+            total += _unique_vertex_count(poly) or 0
+        return total
+    return get_num_coordinates(geom)
+
+
 def _build_summary_batch(
     batch: pa.RecordBatch,
     counts: FileCounts,
     schema: pa.Schema,
     convert_id_to_uuid: bool,
+    geod: Geod,
 ) -> pa.RecordBatch:
     if batch.num_rows == 0:
         return pa.RecordBatch.from_arrays([], schema=schema)
 
     bbox_array: pa.StructArray = batch.column(0)
     sources_array = batch.column(1)
+    geometry_array = batch.column(2)
+    height_array_in = batch.column(3)
 
     xmin = bbox_array.field("xmin").to_numpy(zero_copy_only=False)
     xmax = bbox_array.field("xmax").to_numpy(zero_copy_only=False)
@@ -172,11 +191,33 @@ def _build_summary_batch(
     y_center = ymin + (ymax - ymin) / 2.0
 
     point_geometries = shapely_points(x_center, y_center)
-    geometry_wkb = shapely_to_wkb(point_geometries, hex=False)
-    geometry_array = pa.array(geometry_wkb, type=schema.field(0).type)
+    point_wkb = shapely_to_wkb(point_geometries, hex=False)
+    point_array = pa.array(point_wkb, type=schema.field(0).type)
+
+    polygon_wkb = geometry_array.to_numpy(zero_copy_only=False)
+    polygon_geoms = shapely_from_wkb(polygon_wkb)
+
+    area_sqm: list[int | None] = []
+    vertex_count: list[int | None] = []
+    for geom in polygon_geoms:
+        if geom is None:
+            area_sqm.append(None)
+            vertex_count.append(None)
+            continue
+        area = abs(geod.geometry_area_perimeter(geom)[0])
+        area_sqm.append(int(round(area)))
+        vertex = _unique_vertex_count(geom)
+        vertex_count.append(None if vertex is None else int(vertex))
 
     s1_list: list[int] = []
     s2_list: list[int] = []
+    height_values_raw = height_array_in.to_pylist()
+    height_values: list[int | None] = []
+    for h in height_values_raw:
+        if h is None:
+            height_values.append(None)
+        else:
+            height_values.append(int(round(h)))
 
     for value in sources_array.to_pylist():
         s1, s2, combo_ids = _source_ids(value)
@@ -187,11 +228,18 @@ def _build_summary_batch(
             counts.dataset_counts[ID_TO_NAME.get(cid, "other")] += 1
         counts.combination_counts[_combo_label(combo_ids)] += 1
 
-    s1_array = pa.array(s1_list, type=schema.field(1).type)
-    s2_array = pa.array(s2_list, type=schema.field(2).type)
+    s1_array = pa.array(s1_list, type=schema.field(2).type)
+    s2_array = pa.array(s2_list, type=schema.field(3).type)
 
     return pa.RecordBatch.from_arrays(
-        [geometry_array, s1_array, s2_array],
+        [
+            point_array,
+            s1_array,
+            s2_array,
+            pa.array(area_sqm, type=schema.field(3).type),
+            pa.array(vertex_count, type=schema.field(4).type),
+            pa.array(height_values, type=schema.field(5).type),
+        ],
         schema=schema,
     )
 
@@ -202,11 +250,14 @@ def _summary_batches(
     counts: FileCounts,
     schema: pa.Schema,
     convert_id_to_uuid: bool,
+    geod: Geod,
 ):
     for row_group_idx in range(parquet_file.num_row_groups):
-        table = parquet_file.read_row_group(row_group_idx, columns=["bbox", "sources"])
+        table = parquet_file.read_row_group(
+            row_group_idx, columns=["bbox", "sources", "geometry", "height"]
+        )
         for batch in table.to_batches(max_chunksize=batch_rows):
-            yield _build_summary_batch(batch, counts, schema, convert_id_to_uuid)
+            yield _build_summary_batch(batch, counts, schema, convert_id_to_uuid, geod)
 
 
 def _write_empty_summary(output_path: Path, schema: pa.Schema) -> None:
@@ -216,6 +267,8 @@ def _write_empty_summary(output_path: Path, schema: pa.Schema) -> None:
             pa.array([], type=schema.field(1).type),
             pa.array([], type=schema.field(2).type),
             pa.array([], type=schema.field(3).type),
+            pa.array([], type=schema.field(4).type),
+            pa.array([], type=schema.field(5).type),
         ],
         schema=schema,
     )
@@ -237,7 +290,7 @@ def _summarize_file(task: Task) -> tuple[Path, str, FileCounts]:
         return input_path, f"failed to open ({exc})", counts
 
     convert_id_to_uuid = False
-    summary_schema = _make_summary_schema(pa.null())
+    summary_schema = _make_summary_schema()
 
     writer: pq.ParquetWriter | None = None
     total_rows = 0
@@ -249,6 +302,7 @@ def _summarize_file(task: Task) -> tuple[Path, str, FileCounts]:
             counts,
             summary_schema,
             convert_id_to_uuid,
+            GEOD,
         ):
             if batch.num_rows == 0:
                 continue

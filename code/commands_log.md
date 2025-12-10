@@ -24,8 +24,8 @@
   ```
   /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/summarize_buildings_by_source.py \
   /workspaces/micromamba_cuda/gis_data/overturemaps-us-west-2/test_buildings \
-  --results-dir data/results/buildings_source_summary_test \
-  --log-json data/results/buildings_source_summary_test/log.json \
+  --results-dir data/results/buildings_source_summary_test_ext \
+  --log-json data/results/buildings_source_summary_test_ext/log.json \
   --max-workers 8
   ```
 
@@ -34,9 +34,9 @@
   ```
   /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/summarize_buildings_by_source.py \
   /workspaces/micromamba_cuda/gis_data/overturemaps-us-west-2/release/2025-10-22.0/theme=buildings/type=building \
-  --results-dir data/results/buildings_source_summary \
-  --log-json data/results/buildings_source_summary/log.json \
-  --max-workers 8
+  --results-dir data/results/buildings_source_summary_ext \
+  --log-json data/results/buildings_source_summary_ext/log.json \
+  --max-workers 12
   ```
 
 - **Fix metadata (test)**  
@@ -73,12 +73,34 @@
   --no-skip-existing
   ```
 
+
+    ```
+  /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/aggregate_region_dataset_counts_strtree.py \
+  data/results/buildings_source_summary \
+  data/results/country_area-2025-10-22.0.parquet \
+  --output-dir data/results/country_dataset_counts_strtree \
+  --final-output data/results/country_area-2025-10-22.0_dataset_counts_strtree.parquet \
+  --max-workers 12 \
+  --batch-size 400000 \
+  --no-skip-existing
+  ```
+
   ```
   /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/aggregate_region_dataset_counts_strtree.py \
   data/results/buildings_source_summary \
   data/results/country_area-2025-10-22.0.parquet \
   --output-dir data/results/country_dataset_counts_strtree \
   --final-output data/results/country_area-2025-10-22.0_dataset_counts_strtree.parquet \
+  --max-workers 12 \
+  --batch-size 400000
+  ```
+
+    ```
+  /opt/conda/envs/gis/bin/python code/overture_analysis/data_processing/aggregate_region_dataset_counts_strtree.py \
+  data/results/buildings_source_summary_test_ext \
+  data/results/country_area-2025-10-22.0.parquet \
+  --output-dir data/results/country_dataset_counts_strtree_test \
+  --final-output data/results/country_area-2025-10-22.0_dataset_counts_strtree_test.parquet \
   --max-workers 12 \
   --batch-size 400000
   ```
